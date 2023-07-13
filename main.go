@@ -12,11 +12,18 @@ func main() {
 
 	app := cli.App{
 		Name:        "minicache",
-		Usage:       "",
-		Description: "",
-		Flags:       []cli.Flag{},
-		Action:      NewWithCtx,
-		Version:     Version,
+		Usage:       "a mini cache server",
+		Description: "A mini-cache server for golang simlar to redis but smaller",
+		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:    "listen",
+				Aliases: []string{"l"},
+				Usage:   "listen address",
+				Value:   "0.0.0.0:8000",
+			},
+		},
+		Action:  NewWithCtx,
+		Version: Version,
 	}
 
 	cli.VersionPrinter = func(c *cli.Context) {

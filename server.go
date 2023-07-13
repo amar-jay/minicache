@@ -1,16 +1,20 @@
 package main
 
 import (
+	"context"
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/amar-jay/minicache/cache"
 	"github.com/amar-jay/minicache/client"
+	"github.com/amar-jay/minicache/errors"
 	"github.com/amar-jay/minicache/logger"
 	"github.com/amar-jay/minicache/proto"
 	"github.com/urfave/cli/v2"
@@ -24,7 +28,7 @@ type Members struct {
 type Server struct {
 	Members
 	ListenAddr string
-	cacher     cache.Cache
+	cache      cache.Cache
 }
 
 // new server with urfave cli context
@@ -49,7 +53,7 @@ func NewWithCtx(c *cli.Context) error {
 func (s *Server) start() (err error) {
 	l, err := net.Listen("tcp", s.ListenAddr)
 	if err != nil {
-		return logger.Errorf(ServerError + err.Error())
+		return logger.Errorf(errors.ServerError, err.Error())
 	}
 
 	logger.Printf("mini-cacher server on: %s\n", s.ListenAddr)
@@ -57,7 +61,7 @@ func (s *Server) start() (err error) {
 	for {
 		conn, err := l.Accept()
 		if err != nil {
-			logger.Warnf(ServerError, err.Error())
+			logger.Warnf(errors.ServerError, err.Error())
 			continue
 		}
 
@@ -80,27 +84,78 @@ func (s *Server) handleConn(conn net.Conn) {
 			if err == io.EOF {
 				break
 			}
-			logger.Errorf(ServerError, "parsing error, ", err.Error())
+			logger.Errorf(errors.ServerError, err.Error())
 			break
 		}
 
-		go func() {
+		go func(conn net.Conn, cmd proto.Command) {
 			switch t := cmd.(type) {
-			case *proto.SetCmd:
+			case *proto.Set:
 				s.handleSet(conn, t)
-			case *proto.GetCmd:
+			case *proto.Get:
 				s.handleGet(conn, t)
-			case *proto.JoinCmd:
-				log.Errorf(CommandError, t)
+			case *proto.Join:
+				s.handleJoin(conn, t)
 			default:
-				logger.Errorf(CommandError, t)
+				logger.Errorf(errors.CommandError, t)
 			}
 		}(conn, cmd)
 
 	}
 }
 
-func (s *Server) handleSet(conn net.Conn, cmd *proto.SetCmd) {
+func (s *Server) handleSet(conn net.Conn, cmd *proto.Set) error {
+	logger.Printf("SET %s to %s", cmd.Key, cmd.Val)
+
+	go func() {
+		for member := range s.clients {
+			err := member.Set(context.TODO(), cmd.Key, cmd.Val, cmd.TTL)
+			if err != nil {
+				logger.Println("forward to member error:", err)
+			}
+		}
+	}()
+
+	resp := proto.Response{}
+	if err := s.cache.Set(cmd.Key, cmd.Val, time.Duration(cmd.TTL)); err != nil {
+		resp.Status = http.StatusInternalServerError
+		b, _ := resp.Bytes()
+		_, err := conn.Write(b)
+		return err
+	}
+
+	resp.Status = http.StatusOK
+	b, _ := resp.Bytes()
+	_, err := conn.Write(b)
+
+	return err
+}
+
+func (s *Server) handleGet(conn net.Conn, cmd *proto.Get) (err error) {
+	logger.Println("get command received: ", conn.RemoteAddr().String())
+	res := new(proto.Response)
+	res.Key = cmd.Key
+
+	val, err := s.cache.Get(cmd.Key)
+	if err != nil {
+		res.Status = http.StatusNotFound
+		res.Value = []byte{}
+		b, _ := res.Bytes()
+		if _, err = conn.Write(b); err != nil {
+			return logger.Errorf(errors.ServerError, err.Error())
+		}
+		return
+	}
+	res.Status = http.StatusOK
+	res.Value = val
+
+	b, _ := res.Bytes()
+	_, err = conn.Write(b)
+	return err
+
+}
+
+func (s *Server) handleJoin(conn net.Conn, cmd *proto.Join) {
 	logger.Println("new member joined: ", conn.RemoteAddr().String())
 	s.Lock()
 	defer s.Unlock()
