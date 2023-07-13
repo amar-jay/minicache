@@ -49,7 +49,7 @@ func (c *Client) Set(ctx context.Context, key []byte, val []byte, ttl int64) err
 		return err
 	}
 	if resp.Status != http.StatusOK {
-		return fmt.Errorf("server responsed with non OK status [%s]", resp.Status)
+		return fmt.Errorf("server responsed with non OK status [%d]", resp.Status)
 	}
 
 	return nil

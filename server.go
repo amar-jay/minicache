@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -42,7 +41,7 @@ func NewWithCtx(c *cli.Context) error {
 
 	go func() {
 		sig := <-sigChan
-		log.Printf("exit requested, shutting down", "signal: ", sig)
+		logger.Printf("exit requested, shutting down signal: %v", sig)
 		s.shutdown(1)
 	}()
 
